@@ -22,6 +22,7 @@
 #include <wchar.h>
 #include "simplesenonehmm.h"
 #include <array>
+#include <boost/algorithm/string.hpp>
 
 namespace msra { namespace asr {
 
@@ -184,7 +185,7 @@ public:
     struct parsedpath
     {
         // Note: This is not thread-safe
-        static std::unordered_map<std::wstring, unsigned int> archivePathStringMap;
+        static std::unordered_map<std::string, unsigned int> archivePathStringMap;
         static std::vector<std::wstring> archivePathStringVector;
 
         uint32_t s, e;       // first and last frame inside the archive file; (0, INT_MAX) if not given
@@ -218,54 +219,73 @@ public:
         }
 
     public:
+
+
         // constructor parses a=b[s,e] syntax and fills in the file
         // Can be used implicitly e.g. by passing a string to open().
         static parsedpath Parse(const string& pathParam, string& logicalPath)
         {
+            const static string ubyte("-ubyte");
+
             parsedpath result;
 
-            string xpath(pathParam);
             string archivepath;
 
             // parse out logical path
-            logicalPath = consume(xpath, "=");
+            vector<boost::iterator_range<const char*>> tokens;
+
+            auto container = boost::make_iterator_range(pathParam.data(), pathParam.data() + pathParam.size());
+            boost::split(tokens, container, boost::is_any_of("="));
+
+            logicalPath.assign(tokens[0].begin(), tokens[0].end());
+
             result.isidxformat = false;
-            if (xpath.empty()) // no '=' detected: pass entire file (it's not an archive)
+            if (tokens.size() == 1) // no '=' detected: pass entire file (it's not an archive)
             {
                 archivepath = logicalPath;
                 result.s = 0;
                 result.e = UINT_MAX;
                 result.isarchive = false;
+
                 // check for "-ubyte" suffix in path name => it is an idx file
-                string ubyte("-ubyte");
                 size_t pos = archivepath.size() >= ubyte.size() ? archivepath.size() - ubyte.size() : 0;
                 string suffix = archivepath.substr(pos, ubyte.size());
                 result.isidxformat = ubyte == suffix;
             }
-            else // a=b[s,e] syntax detected
+            else if (tokens.size() == 2)// a=b[s,e] syntax detected
             {
-                archivepath = consume(xpath, "[");
-                if (xpath.empty()) // actually it's only a=b
+                vector<boost::iterator_range<const char*>> otherTokens;
+                boost::split(otherTokens, tokens[1], boost::is_any_of("["));
+
+                archivepath.assign(otherTokens[0].begin(), otherTokens[0].end());
+                if (otherTokens.size() == 1) // actually it's only a=b
                 {
                     result.s = 0;
                     result.e = UINT_MAX;
                     result.isarchive = false;
                 }
-                else
+                else if (otherTokens.size() == 2)
                 {
-                    result.s = msra::strfun::toint(consume(xpath, ",").c_str());
-                    if (xpath.empty())
+                    tokens.clear();
+                    boost::split(tokens, otherTokens[1], boost::is_any_of(",]"));
+                    if (tokens.size() != 3)
                         malformed(pathParam);
-                    result.e = msra::strfun::toint(consume(xpath, "]").c_str());
-                    // TODO \r should be handled elsewhere; refine this
-                    if (!xpath.empty() && xpath != "\r")
-                        malformed(pathParam);
+
+                    result.s = msra::strfun::toint(tokens[0].begin());
+                    result.e = msra::strfun::toint(tokens[1].begin());
                     result.isarchive = true;
                 }
+                else
+                {
+                    malformed(pathParam);
+                }
+            }
+            else
+            {
+                malformed(pathParam);
             }
 
-            auto warchivepath = msra::strfun::utf16(archivepath);
-            auto iter = archivePathStringMap.find(warchivepath);
+            auto iter = archivePathStringMap.find(archivepath);
             if (iter != archivePathStringMap.end())
             {
                 result.archivePathIdx = iter->second;
@@ -273,8 +293,8 @@ public:
             else
             {
                 result.archivePathIdx = (unsigned int)archivePathStringMap.size();
-                archivePathStringMap[warchivepath] = result.archivePathIdx;
-                archivePathStringVector.push_back(warchivepath);
+                archivePathStringMap[archivepath] = result.archivePathIdx;
+                archivePathStringVector.push_back(msra::strfun::utf16(archivepath));
             }
 
             logicalPath = logicalPath.substr(0, logicalPath.find_last_of("."));

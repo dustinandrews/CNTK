@@ -13,7 +13,7 @@
 // Currently this fixes the linking.
 namespace msra { namespace asr {
 
-std::unordered_map<std::wstring, unsigned int> htkfeatreader::parsedpath::archivePathStringMap;
+std::unordered_map<std::string, unsigned int> htkfeatreader::parsedpath::archivePathStringMap;
 std::vector<std::wstring> htkfeatreader::parsedpath::archivePathStringVector;
 
 }}
@@ -54,7 +54,7 @@ HTKDeserializer::HTKDeserializer(
     m_dimension = config.GetFeatureDimension();
     m_dimension = m_dimension * (1 + context.first + context.second);
 
-    InitializeChunkDescriptions(config.GetSequencePaths());
+    InitializeChunkDescriptions(config);
     InitializeStreams(inputName);
     InitializeFeatureInformation();
     InitializeAugmentationWindow(config.GetContextWindow());
@@ -90,7 +90,7 @@ HTKDeserializer::HTKDeserializer(
         InvalidArgument("Cannot expand utterances of the primary stream %ls, please change your configuration.", featureName.c_str());
     }
 
-    InitializeChunkDescriptions(config.GetSequencePaths());
+    InitializeChunkDescriptions(config);
     InitializeStreams(featureName);
     InitializeFeatureInformation();
     InitializeAugmentationWindow(config.GetContextWindow());
@@ -118,18 +118,26 @@ void HTKDeserializer::InitializeAugmentationWindow(const std::pair<size_t, size_
 }
 
 // Initializes chunks based on the configuration and utterance descriptions.
-void HTKDeserializer::InitializeChunkDescriptions(const vector<string>& paths)
+void HTKDeserializer::InitializeChunkDescriptions(ConfigHelper& config)
 {
-    // Read utterance descriptions.
-    vector<UtteranceDescription> utterances;
-    utterances.reserve(paths.size());
+    string scriptPath = config.GetScpFilePath();
+    string rootPath = config.GetRootPath();
+    string scpDir = config.GetScpDir();
 
-    string key;
-    for (const auto& u : paths)
+    fprintf(stderr, "Reading script file %s ...", scriptPath.c_str());
+
+    ifstream scp(scriptPath.c_str());
+    if (!scp)
+        RuntimeError("Failed to open input file: %s", scriptPath.c_str());
+
+    deque<UtteranceDescription> utterances;
+    string line, key;
+    while (getline(scp, line))
     {
+        config.AdjustUtterancePath(rootPath, scpDir, line);
         key.clear();
-        UtteranceDescription description(msra::asr::htkfeatreader::parsedpath::Parse(u, key));
 
+        UtteranceDescription description(msra::asr::htkfeatreader::parsedpath::Parse(line, key));
         size_t numberOfFrames = description.GetNumberOfFrames();
 
         if (m_expandToPrimary && numberOfFrames != 1)
@@ -140,11 +148,16 @@ void HTKDeserializer::InitializeChunkDescriptions(const vector<string>& paths)
         if (!m_corpus->IsIncluded(key))
             continue;
 
+        m_totalNumberOfFrames += numberOfFrames;
         size_t id = m_corpus->KeyToId(key);
         description.SetId(id);
-        utterances.push_back(description);
-        m_totalNumberOfFrames += numberOfFrames;
+        utterances.push_back(std::move(description));
     }
+
+    if (scp.bad())
+        RuntimeError("An error occurred while reading input file: %s", scriptPath.c_str());
+
+    fprintf(stderr, " %d entries\n", static_cast<int>(utterances.size()));
 
     // TODO: We should be able to configure IO chunks based on size.
     // distribute utterances over chunks

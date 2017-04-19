@@ -42,7 +42,7 @@ private:
     class HTKChunk;
 
     // Initialization functions.
-    void InitializeChunkDescriptions(const std::vector<std::string>& paths);
+    void InitializeChunkDescriptions(ConfigHelper& config);
     void InitializeStreams(const std::wstring& featureName);
     void InitializeFeatureInformation();
     void InitializeAugmentationWindow(const std::pair<size_t, size_t>& augmentationWindow);
