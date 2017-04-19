@@ -24,7 +24,7 @@ class CorpusDescriptor
     {
         size_t result = 5381;
         for (const auto& c : key)
-            result = ((result << 5) + result) + c;
+            result = ((result << 5) + result) ^ c;
 
         // Grabbing only 40 bits allowed for the sequence id.
         return result & 0xFFFFFFFFFF;

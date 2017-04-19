@@ -131,27 +131,39 @@ void HTKDeserializer::InitializeChunkDescriptions(ConfigHelper& config)
         RuntimeError("Failed to open input file: %s", scriptPath.c_str());
 
     deque<UtteranceDescription> utterances;
-    string line, key;
-    while (getline(scp, line))
+    std::map<size_t, std::vector<string>> duplicates;
     {
-        config.AdjustUtterancePath(rootPath, scpDir, line);
-        key.clear();
+        std::set<size_t> uniqueIds;
+        string line, key;
+        while (getline(scp, line))
+        {
+            config.AdjustUtterancePath(rootPath, scpDir, line);
+            key.clear();
 
-        UtteranceDescription description(msra::asr::htkfeatreader::parsedpath::Parse(line, key));
-        size_t numberOfFrames = description.GetNumberOfFrames();
+            UtteranceDescription description(msra::asr::htkfeatreader::parsedpath::Parse(line, key));
+            size_t numberOfFrames = description.GetNumberOfFrames();
 
-        if (m_expandToPrimary && numberOfFrames != 1)
-            RuntimeError("Expanded stream should only contain sequences of length 1, utterance '%s' has %zu",
-                key.c_str(),
-                numberOfFrames);
+            if (m_expandToPrimary && numberOfFrames != 1)
+                RuntimeError("Expanded stream should only contain sequences of length 1, utterance '%s' has %zu",
+                    key.c_str(),
+                    numberOfFrames);
 
-        if (!m_corpus->IsIncluded(key))
-            continue;
+            if (!m_corpus->IsIncluded(key))
+                continue;
 
-        m_totalNumberOfFrames += numberOfFrames;
-        size_t id = m_corpus->KeyToId(key);
-        description.SetId(id);
-        utterances.push_back(std::move(description));
+            m_totalNumberOfFrames += numberOfFrames;
+            size_t id = m_corpus->KeyToId(key);
+            description.SetId(id);
+            if (uniqueIds.find(id) == uniqueIds.end())
+            {
+                utterances.push_back(std::move(description));
+                uniqueIds.insert(id);
+            }
+            else
+            {
+                duplicates[id].push_back(key);
+            }
+        }
     }
 
     if (scp.bad())
@@ -175,6 +187,12 @@ void HTKDeserializer::InitializeChunkDescriptions(ConfigHelper& config)
     ChunkIdType chunkId = 0;
     foreach_index(i, utterances)
     {
+        // Skip duplicates.
+        if (duplicates.find(utterances[i].GetId()) != duplicates.end())
+        {
+            continue;
+        }
+
         // if exceeding current entry--create a new one
         // I.e. our chunks are a little larger than wanted (on av. half the av. utterance length).
         if (m_chunks.empty() || m_chunks.back().GetTotalFrames() > ChunkFrames)
@@ -199,12 +217,21 @@ void HTKDeserializer::InitializeChunkDescriptions(ConfigHelper& config)
         return std::get<0>(a) < std::get<0>(b);
     });
 
-    // Check uniqueness.
-    for (size_t i = 1; i < m_keyToChunkLocation.size(); ++i)
+    // Report duplicates.
+    size_t numberOfDuplicates = 0;
+    for (const auto& u : duplicates)
     {
-        if (std::get<0>(m_keyToChunkLocation[i - 1]) == std::get<0>(m_keyToChunkLocation[i]))
-            RuntimeError("Please do not use hash as sequence keys, collisions found.");
+        if (m_verbosity >= 3)
+        {
+            fprintf(stderr, "ID '%zu':\n", u.first);
+            for (const auto& k : u.second)
+                fprintf(stderr, "Key '%s'\n", k.c_str());
+        }
+        numberOfDuplicates += (u.second.size() + 1);
     }
+
+    if(numberOfDuplicates)
+        fprintf(stderr, "WARNING: Number of duplicates is '%zu'. All duplicates will be dropped. Consider switching to numeric sequence ids.\n", numberOfDuplicates);
 
     fprintf(stderr,
         "HTKDeserializer: selected '%zu' utterances grouped into '%zu' chunks, "
