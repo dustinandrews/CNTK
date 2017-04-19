@@ -174,10 +174,23 @@ void HTKDeserializer::InitializeChunkDescriptions(const vector<string>& paths)
         if (!m_primary)
         {
             // Have to store key <-> utterance mapping for non primary deserializers.
-            m_keyToChunkLocation[utterances[i].GetId()] = make_pair(currentChunk.GetChunkId(), currentChunk.GetNumberOfUtterances());
+            m_keyToChunkLocation.push_back(std::make_tuple(utterances[i].GetId(), currentChunk.GetChunkId(), currentChunk.GetNumberOfUtterances()));
         }
 
         currentChunk.Add(move(utterances[i]));
+    }
+
+    std::sort(m_keyToChunkLocation.begin(), m_keyToChunkLocation.end(),
+        [](const std::tuple<size_t, size_t, size_t>& a, const std::tuple<size_t, size_t, size_t>& b)
+    {
+        return std::get<0>(a) < std::get<0>(b);
+    });
+
+    // Check uniqueness.
+    for (size_t i = 1; i < m_keyToChunkLocation.size(); ++i)
+    {
+        if (std::get<0>(m_keyToChunkLocation[i - 1]) == std::get<0>(m_keyToChunkLocation[i]))
+            RuntimeError("Please do not use hash as sequence keys, collisions found.");
     }
 
     fprintf(stderr,
@@ -533,14 +546,19 @@ void HTKDeserializer::GetSequenceById(ChunkIdType chunkId, size_t id, vector<Seq
 bool HTKDeserializer::GetSequenceDescription(const SequenceDescription& primary, SequenceDescription& d)
 {
     assert(!m_primary);
-    auto iter = m_keyToChunkLocation.find(primary.m_key.m_sequence);
-    if (iter == m_keyToChunkLocation.end())
+    auto found = std::lower_bound(m_keyToChunkLocation.begin(), m_keyToChunkLocation.end(), std::make_tuple(primary.m_key.m_sequence, 0, 0),
+        [](const std::tuple<size_t, size_t, size_t>& a, const std::tuple<size_t, size_t, size_t>& b)
+    {
+        return std::get<0>(a) < std::get<0>(b);
+    });
+
+    if (found == m_keyToChunkLocation.end() || std::get<0>(*found) != primary.m_key.m_sequence)
     {
         return false;
     }
 
-    auto chunkId = iter->second.first;
-    auto utteranceIndexInsideChunk = iter->second.second;
+    auto chunkId = std::get<1>(*found);
+    auto utteranceIndexInsideChunk = std::get<2>(*found);
     auto& chunk = m_chunks[chunkId];
     auto utterance = chunk.GetUtterance(utteranceIndexInsideChunk);
 

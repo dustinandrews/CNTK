@@ -74,8 +74,8 @@ private:
     bool m_frameMode;
 
     // Used to correlate a sequence key with the sequence inside the chunk when deserializer is running not in primary mode.
-    // Key -> <chunkid, offset inside chunk>
-    std::map<size_t, std::pair<size_t, size_t>> m_keyToChunkLocation;
+    // <key, chunkid, offset inside chunk>
+    std::vector<std::tuple<size_t, ChunkIdType, uint32_t>> m_keyToChunkLocation;
 
     // Auxiliary data for checking against the data in the feature file.
     unsigned int m_samplePeriod = 0;
